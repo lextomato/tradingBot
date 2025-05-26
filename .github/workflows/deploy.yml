@@ -8,6 +8,7 @@ on:
 jobs:
   deploy: # mejor nombre que “build”, porque no compila nada
     runs-on: ubuntu-latest
+    environment: ci-deploy
 
     steps:
       # 0) (Opcional) registrar el commit en el log del workflow
