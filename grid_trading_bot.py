@@ -65,18 +65,22 @@ class GridTrader:
         self.db_path = db_path
         self.csv_path = csv_path
 
-        # Rango dinámico basado en precio actual ± spread
-        current_price = float(self.client.get_symbol_ticker(symbol=symbol)["price"])
+        # Estado in‑memory
+        self.active_grid: dict[float, dict] = {}
+        self.highest_price: float = 0.0
+        self.eth_bot_balance: float = 0.0   # ← saldo ETH gestionado por el bot
+
+        # Init DB & CSV
+        self._init_db()
+        self._init_csv()
+        self._load_state()
+
+        # Grid params basados en precio actual
+        current_price = float(self.client.get_symbol_ticker(symbol=self.symbol)["price"])
         self.lower = current_price - spread_usd
         self.upper = current_price + spread_usd
         self.grid_size = self._calculate_grid_size(current_price)
-
         self.step_size = self._get_step_size()
-        self.active_grid = {}
-        self.highest_price = 0.0
-
-        self._init_db()
-        self._init_csv()
 
     def _calculate_grid_size(self, price):
         # tamaño de grid que incluye target de ganancia y comisiones round trip
@@ -94,16 +98,29 @@ class GridTrader:
 
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS trades (
-                ts TEXT,
-                side TEXT,
-                price REAL,
-                qty REAL,
-                pnl REAL
-            )"""
-        )
+        cur = conn.cursor()
+        cur.execute("""CREATE TABLE IF NOT EXISTS trades (
+            ts TEXT, side TEXT, price REAL, qty REAL, pnl REAL
+        )""")
+        cur.execute("""CREATE TABLE IF NOT EXISTS state (
+            key TEXT PRIMARY KEY, value REAL
+        )""")
         conn.commit()
+        conn.close()
+    
+    def _save_state(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("REPLACE INTO state (key,value) VALUES ('eth_bot_balance',?)", (self.eth_bot_balance,))
+        conn.commit()
+        conn.close()
+
+    def _load_state(self):
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM state WHERE key='eth_bot_balance'")
+        row = cur.fetchone()
+        if row:
+            self.eth_bot_balance = float(row[0])
         conn.close()
 
     def _init_csv(self):
@@ -175,21 +192,30 @@ class GridTrader:
     def close_all(self):
         for o in self.client.get_open_orders(symbol=self.symbol):
             self._cancel_order(o["orderId"])
-        eth_bal = float(self.client.get_asset_balance(asset="ETH")["free"])
+        eth_bal = self.eth_bot_balance
         if eth_bal > 0:
-            eth_bal = self._adjust_qty(eth_bal)
-            self.client.create_order(
-                symbol=self.symbol,
-                side=SIDE_SELL,
-                type=ORDER_TYPE_MARKET,
-                quantity=eth_bal,
-            )
-            print(f"Market sold remaining {eth_bal} ETH")
+            qty = self._adjust_qty(eth_bal)
+            try:
+                self.client.create_order(
+                    symbol=self.symbol,
+                    side=SIDE_SELL,
+                    type=ORDER_TYPE_MARKET,
+                    quantity=qty,
+                )
+                print(f"Market sold {qty} ETH (bot balance)")
+            except Exception as e:
+                print("Error selling bot balance:",e)
+        self.eth_bot_balance=0.0; self._save_state()
 
     def run(self, poll=15):
         print("Grid bot running…")
         initial_equity = self._equity()
         while True:
+            # 🔍 Revisa si hay bandera para pausar
+            if os.path.exists("STOP.txt"):
+                print("Bot detenido por bandera STOP.txt")
+                time.sleep(5)
+                continue
             try:
                 price = float(self.client.get_symbol_ticker(symbol=self.symbol)["price"])
                 self.highest_price = max(self.highest_price, price)
@@ -206,6 +232,7 @@ class GridTrader:
                         order = self.client.get_order(symbol=self.symbol, orderId=oid)
                         if order["status"] == "FILLED":
                             qty = float(order["executedQty"])
+                            self.eth_bot_balance+=qty; self._save_state()
                             self._log_trade("BUY", level, qty)
                             sell_oid = self._place_limit(SIDE_SELL, node["sell_price"], qty)
                             node.update(order_id=sell_oid, status="SELL_PLACED")
@@ -218,6 +245,7 @@ class GridTrader:
                             buy_price = node["buy_price"] * (1 + self.fee_pct)
                             sell_price = node["sell_price"] * (1 - self.fee_pct)
                             pnl = (sell_price - buy_price) * qty
+                            self.eth_bot_balance-=qty; self._save_state()
                             self._log_trade("SELL", node["sell_price"], qty, pnl)
                             qty = self.usdt_per_order / node["buy_price"]
                             buy_oid = self._place_limit(SIDE_BUY, node["buy_price"], qty)

@@ -28,14 +28,14 @@ client = Client(API_KEY, API_SECRET, testnet=(TESTNET == "True"))
 if TESTNET == "True":
     client.API_URL = "https://testnet.binance.vision/api"
 
-DATA_DIR   = os.getenv("DATA_DIR", "/data")
-DB_PATH    = os.path.join(DATA_DIR, "trades.db")
+DB_PATH = "trades.db"
 REFRESH_EVERY = 30  # segundos
 
 st.set_page_config(page_title="Grid Bot Dashboard", layout="wide")
 st.title("📊 Grid Trading Bot – Dashboard")
 count = st_autorefresh(interval=REFRESH_EVERY * 1000, key="refresh")
 
+# ---------------- Verificación de base de datos ----------------
 if not Path(DB_PATH).exists():
     st.warning("Aún no se ha generado el archivo trades.db. Corre primero el bot.")
     st.stop()
@@ -43,7 +43,33 @@ if not Path(DB_PATH).exists():
 # ---------------- Cargar datos de operaciones ----------------
 conn = sqlite3.connect(DB_PATH)
 df = pd.read_sql_query("SELECT * FROM trades", conn, parse_dates=["ts"])
+cur = conn.cursor()
+cur.execute("SELECT value FROM state WHERE key='eth_bot_balance'")
+row = cur.fetchone()
+ETH_BALANCE_BOT = 0.0
+if row:
+    ETH_BALANCE_BOT = float(row[0])
 conn.close()
+
+# ---------------- Control del Bot ----------------
+st.sidebar.title("🛠 Control del Bot")
+stop_file = "STOP.txt"
+
+if st.sidebar.button("⏹️ Detener bot"):
+    with open(stop_file, "w") as f:
+        f.write("pause")
+    st.sidebar.success("Bot detenido.")
+
+if st.sidebar.button("▶️ Iniciar bot"):
+    if os.path.exists(stop_file):
+        os.remove(stop_file)
+    st.sidebar.success("Bot reactivado.")
+
+estado = "Detenido" if os.path.exists(stop_file) else "Activo"
+st.sidebar.markdown(f"### Estado actual: **{estado}**")
+
+# ETH_BALANCE_BOT
+st.sidebar.markdown(f"### ETH balnce Bot: **{ETH_BALANCE_BOT:.5f}**")
 
 # ---------------- Exposición actual ----------------
 def get_exposure():
