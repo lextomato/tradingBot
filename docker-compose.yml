@@ -3,7 +3,7 @@ services:
     build: .
     container_name: gridbot
     restart: unless-stopped
-    env_file: .env
+    env_file: /srv/secret-envs/gridbot.env
     command: python grid_trading_bot.py # ⬅ ejecuta el trader
     volumes:
       - data:/app # trades.db & csv persisten
@@ -14,7 +14,7 @@ services:
     image: gridbot:latest # reutiliza la MISMA imagen
     depends_on: [bot]
     restart: unless-stopped
-    env_file: .env
+    env_file: /srv/secret-envs/gridbot.env
     command: >
       bash -c "streamlit run dashboard.py
                --server.port 8501
