@@ -9,7 +9,7 @@ services:
     environment:
       DATA_DIR: /data
     volumes:
-      - griddata:/data
+      - data:/data
     networks:
       - web
 
@@ -25,7 +25,7 @@ services:
     environment:
       DATA_DIR: /data
     volumes:
-      - griddata:/data
+      - data:/data
     labels: # Traefik 🔽
       - traefik.enable=true
       #      - traefik.http.routers.gridbot.rule=Host(`gridbot.<TU_DOMINIO>`)
