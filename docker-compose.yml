@@ -6,8 +6,10 @@ services:
     restart: unless-stopped
     env_file: /srv/secret-envs/gridbot.env
     command: python grid_trading_bot.py # ⬅ ejecuta el trader
+    environment:
+      DATA_DIR: /data
     volumes:
-      - data:/app # trades.db & csv persisten
+      - griddata:/data
     networks:
       - web
 
@@ -20,8 +22,10 @@ services:
       bash -c "streamlit run dashboard.py
                --server.port 8501
                --server.address 0.0.0.0"
+    environment:
+      DATA_DIR: /data
     volumes:
-      - data:/app # ve los mismos datos
+      - griddata:/data
     labels: # Traefik 🔽
       - traefik.enable=true
       #      - traefik.http.routers.gridbot.rule=Host(`gridbot.<TU_DOMINIO>`)

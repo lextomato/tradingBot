@@ -28,7 +28,8 @@ client = Client(API_KEY, API_SECRET, testnet=(TESTNET == "True"))
 if TESTNET == "True":
     client.API_URL = "https://testnet.binance.vision/api"
 
-DB_PATH = "trades.db"
+DATA_DIR   = os.getenv("DATA_DIR", "/data")
+DB_PATH    = os.path.join(DATA_DIR, "trades.db")
 REFRESH_EVERY = 30  # segundos
 
 st.set_page_config(page_title="Grid Bot Dashboard", layout="wide")

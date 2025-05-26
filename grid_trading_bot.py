@@ -26,6 +26,10 @@ API_KEY = getenv("API_KEY")
 API_SECRET = getenv("SECRET_KEY")
 TESTNET = getenv("TESTNET")
 
+DATA_DIR   = os.getenv("DATA_DIR", "/data")
+DB_PATH    = os.path.join(DATA_DIR, "trades.db")
+CSV_PATH   = os.path.join(DATA_DIR, "trades_log.csv")
+
 SPREAD_USD = float(getenv("SPREAD_USD", 30))
 GRIDS = int(getenv("GRIDS", 10))
 USDT_PER_ORDER = float(getenv("USDT_PER_ORDER", 10))
@@ -47,8 +51,8 @@ class GridTrader:
         fee_pct: float = 0.001,
         trailing_stop_pct: float = 0.02,
         stop_loss_pct: float = 0.10,
-        db_path: str = "trades.db",
-        csv_path: str = "trades_log.csv",
+        db_path: str = DB_PATH,
+        csv_path: str = CSV_PATH,
     ):
         self.client = client
         self.symbol = symbol
