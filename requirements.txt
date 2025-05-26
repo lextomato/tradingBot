@@ -1,0 +1,6 @@
+python-binance
+python-dotenv
+pandas
+streamlit
+streamlit-autorefresh
+matplotlib

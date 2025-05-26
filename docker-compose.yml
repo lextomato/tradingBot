@@ -1,0 +1,37 @@
+services:
+  bot:
+    build: .
+    container_name: gridbot
+    restart: unless-stopped
+    env_file: .env
+    command: python grid_trading_bot.py # ⬅ ejecuta el trader
+    volumes:
+      - data:/app # trades.db & csv persisten
+    networks:
+      - web
+
+  dashboard:
+    image: gridbot:latest # reutiliza la MISMA imagen
+    depends_on: [bot]
+    restart: unless-stopped
+    env_file: .env
+    command: >
+      bash -c "streamlit run dashboard.py
+               --server.port 8501
+               --server.address 0.0.0.0"
+    volumes:
+      - data:/app # ve los mismos datos
+    labels: # Traefik 🔽
+      - traefik.enable=true
+      - traefik.http.routers.gridbot.rule=Host(`gridbot.<TU_DOMINIO>`)
+      - traefik.http.routers.gridbot.entrypoints=websecure
+      - traefik.http.routers.gridbot.tls.certresolver=le
+    networks:
+      - web
+
+volumes:
+  data:
+
+networks:
+  web:
+    external: true # es la misma red que usa Traefik
