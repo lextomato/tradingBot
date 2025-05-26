@@ -1,0 +1,25 @@
+name: CI / Build & Deploy
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 2) Envíala al VPS (o basta con git pull allí)
+      - name: Ship code & deploy on VPS
+        uses: appleboy/[email protected]
+        with:
+          host: ${{ secrets.VPS_IP }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            # 1. Actualizar repo en el servidor
+            cd /srv/gridbot && git pull origin main
+
+            # 2. Construir / levantar contenedores
+            docker compose -f /srv/gridbot/docker-compose.yml up -d --build --remove-orphans

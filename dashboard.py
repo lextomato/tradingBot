@@ -65,6 +65,7 @@ def get_exposure():
 # ---------------- Mostrar métricas ----------------
 exposure = get_exposure()
 
+# primera fila
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total trades", len(df))
 col2.metric("PnL total (USDT)", f"{df['pnl'].sum():.2f}")
@@ -72,10 +73,17 @@ win_rate = len(df[df["pnl"] > 0]) / len(df) * 100
 col3.metric("Win-rate", f"{win_rate:.1f}%")
 col4.metric("Última operación", df.iloc[-1]["ts"].strftime("%Y-%m-%d %H:%M:%S"))
 
-col5, col6, col7 = st.columns(3)
-col5.metric("ETH total", f"{exposure['ETH total']:.5f} ETH")
-col6.metric("ETH en USDT", f"{exposure['Valor ETH total (USDT)']:.2f}")
-col7.metric("Exposición total", f"{exposure['Exposición total']:.2f} USDT")
+# segunda fila – todas las exposiciones
+c5, c6, c7, c8 = st.columns(4)
+c5.metric("ETH disponible", f"{exposure['ETH disponible']:.5f}")
+c6.metric("ETH bloqueado",  f"{exposure['ETH bloqueado']:.5f}")
+c7.metric("ETH total",      f"{exposure['ETH total']:.5f}")
+c8.metric("Precio ETH",     f"{exposure['Precio actual ETH']:.2f} USDT")
+
+# tercera fila – valoraciones en USDT
+c9, c10 = st.columns(2)
+c9.metric("USDT bloqueado en órdenes", f"{exposure['USDT bloqueado en órdenes']:.2f}")
+c10.metric("Exposición total",          f"{exposure['Exposición total']:.2f} USDT")
 
 # ---------------- Gráfico PnL acumulado ----------------
 df["cum_pnl"] = df["pnl"].cumsum()

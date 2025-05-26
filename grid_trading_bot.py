@@ -17,7 +17,6 @@ import sqlite3
 from datetime import datetime, timezone
 from os import getenv
 from dotenv import load_dotenv
-from pprint import pprint
 from pathlib import Path
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
@@ -26,6 +25,11 @@ load_dotenv(dotenv_path=ENV_PATH, override=True)
 API_KEY = getenv("API_KEY")
 API_SECRET = getenv("SECRET_KEY")
 TESTNET = getenv("TESTNET")
+
+SPREAD_USD = float(getenv("SPREAD_USD", 30))
+GRIDS = int(getenv("GRIDS", 10))
+USDT_PER_ORDER = float(getenv("USDT_PER_ORDER", 10))
+TARGET_GAIN_PCT = float(getenv("TARGET_GAIN_PCT", 0.015))
 
 from binance.client import Client
 from binance.enums import *
@@ -243,12 +247,13 @@ def main():
     bot = GridTrader(
         client,
         symbol="ETHUSDT",
-        spread_usd=30,
-        grids=10,
-        usdt_per_order=30,
-        target_gain_pct=0.015,
+        spread_usd=SPREAD_USD,
+        grids=GRIDS,
+        usdt_per_order=USDT_PER_ORDER,
+        target_gain_pct=TARGET_GAIN_PCT,
         fee_pct=0.001,
     )
+
     bot.setup_grid()
     bot.run()
 

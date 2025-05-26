@@ -1,6 +1,7 @@
 services:
   bot:
     build: .
+    image: gridbot:latest
     container_name: gridbot
     restart: unless-stopped
     env_file: /srv/secret-envs/gridbot.env
@@ -23,9 +24,12 @@ services:
       - data:/app # ve los mismos datos
     labels: # Traefik 🔽
       - traefik.enable=true
-      - traefik.http.routers.gridbot.rule=Host(`gridbot.<TU_DOMINIO>`)
-      - traefik.http.routers.gridbot.entrypoints=websecure
-      - traefik.http.routers.gridbot.tls.certresolver=le
+      #      - traefik.http.routers.gridbot.rule=Host(`gridbot.<TU_DOMINIO>`)
+      #      - traefik.http.routers.gridbot.entrypoints=websecure
+      #      - traefik.http.routers.gridbot.tls.certresolver=le
+      - traefik.http.routers.gridbot.rule=PathPrefix(`/`)
+      - traefik.http.routers.gridbot.entrypoints=web
+      - traefik.http.services.gridbot.loadbalancer.server.port=8501
     networks:
       - web
 
@@ -35,3 +39,4 @@ volumes:
 networks:
   web:
     external: true # es la misma red que usa Traefik
+    name: traefik_default
