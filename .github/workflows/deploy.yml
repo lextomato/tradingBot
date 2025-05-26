@@ -1,25 +1,35 @@
 name: CI / Build & Deploy
+
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main # ← lista en YAML, no corchetes (opcional pero más legible)
 
 jobs:
-  build:
+  deploy: # mejor nombre que “build”, porque no compila nada
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # 0) (Opcional) registrar el commit en el log del workflow
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # 2) Envíala al VPS (o basta con git pull allí)
+      # 1) Conexión SSH y despliegue
       - name: Ship code & deploy on VPS
-        uses: appleboy/[email protected]
+        uses: appleboy/ssh-action@v1.0.0 # owner/repo@version: ✔️
         with:
           host: ${{ secrets.VPS_IP }}
           username: deploy
-          key: ${{ secrets.VPS_SSH_KEY }}
+          key: ${{ secrets.VPS_SSH_KEY }} # llave privada **sin passphrase**
+          # puerto 22 por defecto; si usas otro añade `port: 2222`
           script: |
-            # 1. Actualizar repo en el servidor
-            cd /srv/gridbot && git pull origin main
+            set -e                       # aborta si algo falla
 
-            # 2. Construir / levantar contenedores
-            docker compose -f /srv/gridbot/docker-compose.yml up -d --build --remove-orphans
+            echo "::group::Pull repo"
+            cd /srv/gridbot
+            git pull origin main
+            echo "::endgroup::"
+
+            echo "::group::Compose build & up"
+            docker compose up -d --build --remove-orphans
+            echo "::endgroup::"
