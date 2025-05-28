@@ -269,7 +269,7 @@ def main():
     if not API_KEY or not API_SECRET:
         raise SystemExit("Configura las variables API_KEY y SECRET_KEY")
 
-    client = Client(API_KEY, API_SECRET, testnet=True)
+    client = Client(API_KEY, API_SECRET, testnet=(TESTNET == "True"))
     if TESTNET == "True":
         client.API_URL = "https://testnet.binance.vision/api"
 
