@@ -128,23 +128,50 @@ class GridTrader:
         conn.commit(); conn.close()
 
     # ---------- grid operaciones ---------- #
-    def _sanity_adjust_grids(self, price_now):
+    def _sanity_adjust_grids(self, price_now: float) -> None:
         """
-        Reduce self.grids si la orden mínima no cumple NOTIONAL.
+        Ajusta self.grids para que:
+        1. Cada orden cumpla LOT_SIZE y MIN_NOTIONAL de Binance.
+        2. El tamaño del grid (gap) sea, al menos, igual a 2 × fee_pct
+            → de ese modo cubre las comisiones maker+maker o taker+taker.
         """
+        # Capital total real que se va repartiendo al reducir niveles
+        base_capital = self.total_usdt or (self.usdt_per_order * self.grids)
+        original_grids = self.grids
+
         while True:
+            # --------------- chequeo de filtros ---------------
             nominal = self.usdt_per_order
             qty = nominal / price_now
-            if nominal >= self.min_notional and qty >= self.min_qty:
-                break  # OK
+            filters_ok = (nominal >= self.min_notional) and (qty >= self.min_qty)
+
+            # --------------- chequeo de comisiones ------------
+            gap_pct = self.grid_size / price_now        # porcentaje del salto
+            fee_need = 2 * self.fee_pct                 # comisión ida + vuelta
+            gap_ok = gap_pct >= fee_need
+
+            if filters_ok and gap_ok:
+                break   # todo correcto
+
+            # Si no se cumple, reducen niveles
             if self.grids <= 1:
-                raise ValueError("Capital demasiado bajo para cumplir MIN_NOTIONAL de Binance.")
-            # reducir grids y recalcular
+                raise ValueError(
+                    "Rango ±SPREAD_USD demasiado estrecho o capital insuficiente "
+                    "para cubrir MIN_NOTIONAL y/o las comisiones."
+                )
+
             self.grids -= 1
-            self.usdt_per_order = (self.total_usdt or self.usdt_per_order) / self.grids
             self.grid_size = (self.upper - self.lower) / self.grids
-        if self.grids < GRIDS:
-            print(f"[Ajuste] Grids reducidos a {self.grids} para cumplir MIN_NOTIONAL.")
+            self.usdt_per_order = base_capital / self.grids
+
+        # Mensaje informativo si se tuvo que ajustar
+        if self.grids < original_grids:
+            print(
+                f"[Ajuste] Grids reducidos a {self.grids} "
+                f"→ gap = {self.grid_size:.2f} USDT "
+                f"({gap_pct*100:.3f} %) ≥ 2×fee_pct."
+            )
+
 
     def _place_limit(self, side, price, qty):
         try:
