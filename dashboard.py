@@ -18,8 +18,15 @@ from binance.client import Client
 from dotenv import load_dotenv
 import os
 
-# ---------------- Config ----------------
 load_dotenv(override=True)
+# -------------------------------------------------
+# Lee la misma configuración que usa el bot
+# -------------------------------------------------
+SYMBOL  = os.getenv("SYMBOL", "ETHUSDT")
+BASE_ASSET = SYMBOL[:-4]        # p.e.  ETH  de  ETHUSDT
+DATA_DIR   = os.getenv("DATA_DIR", "./data")
+
+# ---------------- Config ----------------
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("SECRET_KEY")
 TESTNET = os.getenv("TESTNET")
@@ -28,8 +35,7 @@ client = Client(API_KEY, API_SECRET, testnet=(TESTNET == "True"))
 if TESTNET == "True":
     client.API_URL = "https://testnet.binance.vision/api"
 
-DATA_DIR   = os.getenv("DATA_DIR", "/data")
-DB_PATH    = os.path.join(DATA_DIR, "trades.db")
+DB_PATH = os.path.join(DATA_DIR, "trades.db")
 REFRESH_EVERY = 30  # segundos
 
 st.set_page_config(page_title="Grid Bot Dashboard", layout="wide")
@@ -69,25 +75,27 @@ if st.sidebar.button("▶️ Iniciar bot"):
 estado = "Detenido" if os.path.exists(stop_file) else "Activo"
 st.sidebar.markdown(f"### Estado actual: **{estado}**")
 
-# ETH_BALANCE_BOT
-st.sidebar.markdown(f"### ETH balnce Bot: **{ETH_BALANCE_BOT:.5f}**")
+# Saldo controlado por el bot (leer del estado)
+st.sidebar.markdown(
+    f"### {BASE_ASSET} balance Bot: **{ETH_BALANCE_BOT:.5f}**"
+)
 
 # ---------------- Exposición actual ----------------
 def get_exposure():
-    eth = float(client.get_asset_balance(asset="ETH")["free"])
-    eth_locked = float(client.get_asset_balance(asset="ETH")["locked"])
-    price = float(client.get_symbol_ticker(symbol="ETHUSDT")["price"])
+    base = float(client.get_asset_balance(asset=BASE_ASSET)["free"])
+    base_locked = float(client.get_asset_balance(asset=BASE_ASSET)["locked"])
+    price = float(client.get_symbol_ticker(symbol=SYMBOL)["price"])
     usdt_locked = float(client.get_asset_balance(asset="USDT")["locked"])
-    
-    eth_total = eth + eth_locked
+
+    base_total = base + base_locked
     return {
-        "ETH disponible": eth,
-        "ETH bloqueado": eth_locked,
-        "ETH total": eth_total,
-        "Precio actual ETH": price,
-        "Valor ETH total (USDT)": eth_total * price,
+        f"{BASE_ASSET} disponible": base,
+        f"{BASE_ASSET} bloqueado":  base_locked,
+        f"{BASE_ASSET} total":      base_total,
+        f"Precio actual {BASE_ASSET}": price,
+        "Valor base total (USDT)":      base_total * price,
         "USDT bloqueado en órdenes": usdt_locked,
-        "Exposición total": eth_total * price + usdt_locked,
+        "Exposición total": base_total * price + usdt_locked,
     }
 
 # ---------------- Mostrar métricas ----------------
@@ -97,16 +105,16 @@ exposure = get_exposure()
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total trades", len(df))
 col2.metric("PnL total (USDT)", f"{df['pnl'].sum():.2f}")
-win_rate = len(df[df["pnl"] > 0]) / len(df) * 100
+win_rate = (len(df[df["pnl"] > 0]) / len(df) * 100) if len(df) else 0
 col3.metric("Win-rate", f"{win_rate:.1f}%")
 col4.metric("Última operación", df.iloc[-1]["ts"].strftime("%Y-%m-%d %H:%M:%S"))
 
-# segunda fila – todas las exposiciones
+# segunda fila – exposiciones base
 c5, c6, c7, c8 = st.columns(4)
-c5.metric("ETH disponible", f"{exposure['ETH disponible']:.5f}")
-c6.metric("ETH bloqueado",  f"{exposure['ETH bloqueado']:.5f}")
-c7.metric("ETH total",      f"{exposure['ETH total']:.5f}")
-c8.metric("Precio ETH",     f"{exposure['Precio actual ETH']:.2f} USDT")
+c5.metric(f"{BASE_ASSET} disponible", f"{exposure[f'{BASE_ASSET} disponible']:.5f}")
+c6.metric(f"{BASE_ASSET} bloqueado",  f"{exposure[f'{BASE_ASSET} bloqueado']:.5f}")
+c7.metric(f"{BASE_ASSET} total",      f"{exposure[f'{BASE_ASSET} total']:.5f}")
+c8.metric(f"Precio {BASE_ASSET}",     f"{exposure[f'Precio actual {BASE_ASSET}']:.2f} USDT")
 
 # tercera fila – valoraciones en USDT
 c9, c10 = st.columns(2)

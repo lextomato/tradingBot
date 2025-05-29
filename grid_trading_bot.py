@@ -1,132 +1,123 @@
 # =============================
-# grid_trading_bot.py (versión mejorada)
+# grid_trading_bot_v2a.py
 # =============================
 
 """
-Mejoras:
-1. Ajuste dinámico del rango de trading con base en precio actual ±50 USD.
-2. Inclusión de comisiones spot (0.1%) en el cálculo de PnL neto.
-3. Cálculo automático de grid_size según rentabilidad objetivo (por orden).
+Cambios clave (v2-A):
+1. Grid uniforme: tamaño = (upper - lower) / grids
+2. Capital total: si TOTAL_USDT > 0 reparte entre grids.
+3. Valida LOT_SIZE y MIN_NOTIONAL; ajusta o advierte.
 """
 
-import os
-import time
-import math
-import csv
-import sqlite3
+import os, time, math, csv, sqlite3
 from datetime import datetime, timezone
-from os import getenv
-from dotenv import load_dotenv
 from pathlib import Path
-
-ENV_PATH = Path(__file__).resolve().parent / ".env"
-load_dotenv(dotenv_path=ENV_PATH, override=True)
-
-API_KEY = getenv("API_KEY")
-API_SECRET = getenv("SECRET_KEY")
-TESTNET = getenv("TESTNET")
-
-DATA_DIR   = os.getenv("DATA_DIR", "/data")
-DB_PATH    = os.path.join(DATA_DIR, "trades.db")
-CSV_PATH   = os.path.join(DATA_DIR, "trades_log.csv")
-
-SPREAD_USD = float(getenv("SPREAD_USD", 30))
-GRIDS = int(getenv("GRIDS", 10))
-USDT_PER_ORDER = float(getenv("USDT_PER_ORDER", 10))
-TARGET_GAIN_PCT = float(getenv("TARGET_GAIN_PCT", 0.015))
-
+from dotenv import load_dotenv
 from binance.client import Client
 from binance.enums import *
 from binance.exceptions import BinanceAPIException
+import json
+
+# ---------- Configuración ---------- #
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(ENV_PATH, override=True)
+
+API_KEY    = os.getenv("API_KEY")
+API_SECRET = os.getenv("SECRET_KEY")
+TESTNET    = os.getenv("TESTNET") == "True"
+
+SYMBOL            = os.getenv("SYMBOL", "ETHUSDT")
+SPREAD_USD        = float(os.getenv("SPREAD_USD", 35))      # ±
+GRIDS             = int(os.getenv("GRIDS", 16))             # nº de niveles
+TOTAL_USDT        = float(os.getenv("TOTAL_USDT", 230))     # capital global
+USDT_PER_ORDER    = float(os.getenv("USDT_PER_ORDER", 10))  # fallback
+TARGET_GAIN_PCT   = float(os.getenv("TARGET_GAIN_PCT", 0.015))
+FEE_PCT           = float(os.getenv("FEE_PCT", 0.001))
+TRAILING_STOP_PCT = float(os.getenv("TRAILING_STOP_PCT", 0.02))
+STOP_LOSS_PCT     = float(os.getenv("STOP_LOSS_PCT", 0.10))
+
+DATA_DIR = os.getenv("DATA_DIR", "./data")
+Path(DATA_DIR).mkdir(exist_ok=True)
+DB_PATH  = os.path.join(DATA_DIR, "trades.db")
+CSV_PATH = os.path.join(DATA_DIR, "trades_log.csv")
+# ----------------------------------- #
 
 class GridTrader:
-    def __init__(
-        self,
-        client: Client,
-        symbol: str,
-        spread_usd: float = 50,
-        grids: int = 10,
-        usdt_per_order: float = 10,
-        target_gain_pct: float = 0.015,
-        fee_pct: float = 0.001,
-        trailing_stop_pct: float = 0.02,
-        stop_loss_pct: float = 0.10,
-        db_path: str = DB_PATH,
-        csv_path: str = CSV_PATH,
-    ):
+    def __init__(self, client: Client):
         self.client = client
-        self.symbol = symbol
-        self.grids = grids
-        self.usdt_per_order = usdt_per_order
-        self.target_gain_pct = target_gain_pct
-        self.fee_pct = fee_pct
-        self.trailing_stop_pct = trailing_stop_pct
-        self.stop_loss_pct = stop_loss_pct
-        self.db_path = db_path
-        self.csv_path = csv_path
+        self.symbol = SYMBOL
+        self.spread_usd = SPREAD_USD
+        self.grids = GRIDS
+        self.total_usdt = TOTAL_USDT if TOTAL_USDT > 0 else None
+        self.usdt_per_order = self.total_usdt / self.grids if self.total_usdt else USDT_PER_ORDER
+        self.target_gain_pct = TARGET_GAIN_PCT
+        self.fee_pct = FEE_PCT
+        self.trailing_stop_pct = TRAILING_STOP_PCT
+        self.stop_loss_pct = STOP_LOSS_PCT
+        self.db_path = DB_PATH
+        self.csv_path = CSV_PATH
 
-        # Estado in‑memory
-        self.active_grid: dict[float, dict] = {}
-        self.highest_price: float = 0.0
-        self.eth_bot_balance: float = 0.0   # ← saldo ETH gestionado por el bot
+        # estado
+        self.active_grid = {}
+        self.highest_price = 0.0
+        self.eth_bot_balance = 0.0
 
-        # Init DB & CSV
         self._init_db()
         self._init_csv()
         self._load_state()
 
-        # Grid params basados en precio actual
-        current_price = float(self.client.get_symbol_ticker(symbol=self.symbol)["price"])
-        self.lower = current_price - spread_usd
-        self.upper = current_price + spread_usd
-        self.grid_size = self._calculate_grid_size(current_price)
-        self.step_size = self._get_step_size()
+        # obtén filtros de Binance
+        self._load_filters()
 
-    def _calculate_grid_size(self, price):
-        # tamaño de grid que incluye target de ganancia y comisiones round trip
-        return price * (self.target_gain_pct + 2 * self.fee_pct)
+        # rango inicial y grid size uniforme
+        price = float(self.client.get_symbol_ticker(symbol=self.symbol)["price"])
+        self.lower = price - self.spread_usd
+        self.upper = price + self.spread_usd
+        self.grid_size = (self.upper - self.lower) / self.grids
+        # si grid_size muy pequeño y viola min_notional, reajusta
+        self._sanity_adjust_grids(price)
 
-    def _get_step_size(self):
+    # ---------- Binance filters ---------- #
+    def _load_filters(self):
         info = self.client.get_symbol_info(self.symbol)
-        lot_size = [f for f in info["filters"] if f["filterType"] == "LOT_SIZE"][0]
-        return float(lot_size["stepSize"])
+        filters = {f["filterType"]: f for f in info["filters"]}
+        # imprimir filtros para debug formateado para visualizcion en consola de forma ordenada con identacion
+        print("Binance filters:\n", json.dumps(filters, indent=2, sort_keys=True))
+        self.lot_size   = float(filters["LOT_SIZE"]["stepSize"])
+        self.min_qty    = float(filters["LOT_SIZE"]["minQty"])
+        self.min_notional = float(filters["NOTIONAL"]["minNotional"])
 
-    def _adjust_qty(self, qty):
-        precision = int(-math.log10(self.step_size))
-        adjusted = math.floor(qty / self.step_size) * self.step_size
-        return float(f"{adjusted:.{precision}f}")
-
+    # ---------- persistencia ---------- #
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        cur.execute("""CREATE TABLE IF NOT EXISTS trades (
-            ts TEXT, side TEXT, price REAL, qty REAL, pnl REAL
-        )""")
-        cur.execute("""CREATE TABLE IF NOT EXISTS state (
-            key TEXT PRIMARY KEY, value REAL
-        )""")
-        conn.commit()
-        conn.close()
-    
+        c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS trades (ts TEXT, side TEXT, price REAL, qty REAL, pnl REAL)")
+        c.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value REAL)")
+        conn.commit(); conn.close()
+
+    def _init_csv(self):
+        if not os.path.isfile(self.csv_path):
+            with open(self.csv_path, "w", newline="") as f:
+                csv.writer(f).writerow(["ts", "side", "price", "qty", "pnl"])
+
     def _save_state(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("REPLACE INTO state (key,value) VALUES ('eth_bot_balance',?)", (self.eth_bot_balance,))
-        conn.commit()
-        conn.close()
+        conn.commit(); conn.close()
 
     def _load_state(self):
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         cur.execute("SELECT value FROM state WHERE key='eth_bot_balance'")
         row = cur.fetchone()
-        if row:
-            self.eth_bot_balance = float(row[0])
+        if row: self.eth_bot_balance = float(row[0])
         conn.close()
 
-    def _init_csv(self):
-        if not os.path.isfile(self.csv_path):
-            with open(self.csv_path, "w", newline="") as f:
-                csv.writer(f).writerow(["ts", "side", "price", "qty", "pnl"])
+    # ---------- helpers ---------- #
+    def _adjust_qty(self, qty):
+        precision = int(-math.log10(self.lot_size))
+        adjusted = math.floor(qty / self.lot_size) * self.lot_size
+        return float(f"{adjusted:.{precision}f}")
 
     def _log_trade(self, side, price, qty, pnl=0.0):
         ts = datetime.now(timezone.utc).isoformat()
@@ -134,174 +125,161 @@ class GridTrader:
             csv.writer(f).writerow([ts, side, price, qty, pnl])
         conn = sqlite3.connect(self.db_path)
         conn.execute("INSERT INTO trades VALUES (?,?,?,?,?)", (ts, side, price, qty, pnl))
-        conn.commit()
-        conn.close()
+        conn.commit(); conn.close()
+
+    # ---------- grid operaciones ---------- #
+    def _sanity_adjust_grids(self, price_now):
+        """
+        Reduce self.grids si la orden mínima no cumple NOTIONAL.
+        """
+        while True:
+            nominal = self.usdt_per_order
+            qty = nominal / price_now
+            if nominal >= self.min_notional and qty >= self.min_qty:
+                break  # OK
+            if self.grids <= 1:
+                raise ValueError("Capital demasiado bajo para cumplir MIN_NOTIONAL de Binance.")
+            # reducir grids y recalcular
+            self.grids -= 1
+            self.usdt_per_order = (self.total_usdt or self.usdt_per_order) / self.grids
+            self.grid_size = (self.upper - self.lower) / self.grids
+        if self.grids < GRIDS:
+            print(f"[Ajuste] Grids reducidos a {self.grids} para cumplir MIN_NOTIONAL.")
 
     def _place_limit(self, side, price, qty):
         try:
-            order = self.client.create_order(
+            return self.client.create_order(
                 symbol=self.symbol,
-                side=side,
-                type=ORDER_TYPE_LIMIT,
-                timeInForce=TIME_IN_FORCE_GTC,
-                quantity=self._adjust_qty(qty),
-                price=f"{price:.2f}",
-            )
-            return order["orderId"]
-        except Exception as e:
-            print("Limit order error:", e)
-            return None
+                side=side, type=ORDER_TYPE_LIMIT, timeInForce=TIME_IN_FORCE_GTC,
+                quantity=self._adjust_qty(qty), price=f"{price:.2f}"
+            )["orderId"]
+        except BinanceAPIException as e:
+            print("Limit order error:", e); return None
 
-    def _cancel_order(self, order_id):
-        try:
-            self.client.cancel_order(symbol=self.symbol, orderId=order_id)
+    def _cancel_order(self, oid):
+        try: self.client.cancel_order(symbol=self.symbol, orderId=oid)
         except BinanceAPIException as exc:
-            if exc.code not in (-2011,):
-                print("Cancel error:", exc)
+            if exc.code not in (-2011,): print("Cancel error:", exc)
 
     def _equity(self):
-        balances = self.client.get_account()["balances"]
-        bal = {b["asset"]: float(b["free"]) + float(b["locked"]) for b in balances}
+        bal = {b["asset"]: float(b["free"]) + float(b["locked"])
+               for b in self.client.get_account()["balances"]}
         price = float(self.client.get_symbol_ticker(symbol=self.symbol)["price"])
         return bal.get("USDT", 0) + bal.get("ETH", 0) * price
 
     def setup_grid(self):
+        # cancela cualquier orden previa
         for o in self.client.get_open_orders(symbol=self.symbol):
             self._cancel_order(o["orderId"])
-
         self.active_grid.clear()
+
         level_price = self.lower
-        while level_price < self.upper:
+        while level_price < self.upper - 1e-8:   # deja hueco al upper
             level = round(level_price, 2)
             self.active_grid[level] = {
                 "buy_price": level,
                 "sell_price": round(level + self.grid_size, 2),
                 "order_id": None,
-                "status": "EMPTY",
+                "status": "EMPTY"
             }
             level_price += self.grid_size
 
-        for level, node in self.active_grid.items():
-            qty = self.usdt_per_order / level
-            order_id = self._place_limit(SIDE_BUY, level, qty)
-            if order_id:
-                node["order_id"] = order_id
-                node["status"] = "BUY_PLACED"
-                print(f"Buy limit placed @{level} ({qty:.5f} ETH)")
+        # coloca las órdenes BUY
+        for lvl, node in self.active_grid.items():
+            qty = self.usdt_per_order / lvl
+            oid = self._place_limit(SIDE_BUY, lvl, qty)
+            if oid:
+                node.update(order_id=oid, status="BUY_PLACED")
+                print(f"Buy limit placed @{lvl} ({qty:.5f} ETH)")
 
     def close_all(self):
         for o in self.client.get_open_orders(symbol=self.symbol):
             self._cancel_order(o["orderId"])
-        eth_bal = self.eth_bot_balance
-        if eth_bal > 0:
-            qty = self._adjust_qty(eth_bal)
+        if self.eth_bot_balance > 0:
+            qty = self._adjust_qty(self.eth_bot_balance)
             try:
-                self.client.create_order(
-                    symbol=self.symbol,
-                    side=SIDE_SELL,
-                    type=ORDER_TYPE_MARKET,
-                    quantity=qty,
-                )
+                self.client.create_order(symbol=self.symbol, side=SIDE_SELL,
+                                         type=ORDER_TYPE_MARKET, quantity=qty)
                 print(f"Market sold {qty} ETH (bot balance)")
-            except Exception as e:
-                print("Error selling bot balance:",e)
-        self.eth_bot_balance=0.0; self._save_state()
+            except BinanceAPIException as e:
+                print("Error selling bot balance:", e)
+        self.eth_bot_balance = 0.0; self._save_state()
 
-    def run(self, poll=15):
-        print("Grid bot running…")
+    # ---------- bucle principal ---------- #
+    def run(self, poll=10):
+        print("Grid bot running…  (Ctrl-C para salir)")
         initial_equity = self._equity()
+        self.highest_price = float(self.client.get_symbol_ticker(symbol=self.symbol)["price"])
+
         while True:
-            # 🔍 Revisa si hay bandera para pausar
-            if os.path.exists("STOP.txt"):
-                print("Bot detenido por bandera STOP.txt")
-                time.sleep(5)
-                continue
             try:
                 price = float(self.client.get_symbol_ticker(symbol=self.symbol)["price"])
                 self.highest_price = max(self.highest_price, price)
 
+                # stop-loss global
                 if self._equity() < initial_equity * (1 - self.stop_loss_pct):
-                    print("Global stop-loss hit; closing bot.")
-                    self.close_all()
-                    break
+                    print("Global stop-loss triggered.")
+                    self.close_all(); break
 
-                for level, node in list(self.active_grid.items()):
-                    status = node["status"]
-                    oid = node["order_id"]
+                # recorre nodos
+                for lvl, node in list(self.active_grid.items()):
+                    oid, status = node["order_id"], node["status"]
                     if status == "BUY_PLACED":
                         order = self.client.get_order(symbol=self.symbol, orderId=oid)
                         if order["status"] == "FILLED":
                             qty = float(order["executedQty"])
-                            self.eth_bot_balance+=qty; self._save_state()
-                            self._log_trade("BUY", level, qty)
+                            self.eth_bot_balance += qty; self._save_state()
+                            self._log_trade("BUY", lvl, qty)
                             sell_oid = self._place_limit(SIDE_SELL, node["sell_price"], qty)
                             node.update(order_id=sell_oid, status="SELL_PLACED")
-                            print(f"Filled BUY @{level}, placed SELL @{node['sell_price']}")
+                            print(f"Filled BUY @{lvl}, placed SELL @{node['sell_price']}")
                     elif status == "SELL_PLACED":
                         order = self.client.get_order(symbol=self.symbol, orderId=oid)
                         if order["status"] == "FILLED":
                             qty = float(order["executedQty"])
-                            # PnL neto considerando comisión
-                            buy_price = node["buy_price"] * (1 + self.fee_pct)
-                            sell_price = node["sell_price"] * (1 - self.fee_pct)
-                            pnl = (sell_price - buy_price) * qty
-                            self.eth_bot_balance-=qty; self._save_state()
+                            buy_fee  = node["buy_price"]  * self.fee_pct
+                            sell_fee = node["sell_price"] * self.fee_pct
+                            pnl = (node["sell_price"] - sell_fee) - (node["buy_price"] + buy_fee)
+                            pnl *= qty
+                            self.eth_bot_balance -= qty; self._save_state()
                             self._log_trade("SELL", node["sell_price"], qty, pnl)
-                            qty = self.usdt_per_order / node["buy_price"]
-                            buy_oid = self._place_limit(SIDE_BUY, node["buy_price"], qty)
+                            # recoloca BUY
+                            new_qty = self.usdt_per_order / node["buy_price"]
+                            buy_oid = self._place_limit(SIDE_BUY, node["buy_price"], new_qty)
                             node.update(order_id=buy_oid, status="BUY_PLACED")
-                            print(f"Filled SELL @{node['sell_price']}, new BUY @{node['buy_price']}")
+                            print(f"Filled SELL @{node['sell_price']}  PnL={pnl:.2f} USDT")
 
+                # trailing-stop de tendencia
                 if price < self.highest_price * (1 - self.trailing_stop_pct):
-                    print("Trailing stop hit; resetting grid…")
+                    print("Trailing stop reset del grid…")
                     self.close_all()
-                    self.highest_price = price
+                    self.lower = price - self.spread_usd
+                    self.upper = price + self.spread_usd
+                    self.grid_size = (self.upper - self.lower) / self.grids
                     self.setup_grid()
                     initial_equity = self._equity()
+                    self.highest_price = price
 
                 time.sleep(poll)
+
+            except KeyboardInterrupt:
+                print("Interrumpido por el usuario.")
+                self.close_all(); break
             except Exception as e:
-                print("Loop error:", e)
-                time.sleep(poll)
+                print("Loop error:", e); time.sleep(poll)
 
-
+# ---------- ejecución ---------- #
 def main():
     if not API_KEY or not API_SECRET:
-        raise SystemExit("Configura las variables API_KEY y SECRET_KEY")
+        raise SystemExit("Configura variables API_KEY y SECRET_KEY en .env")
 
-    client = Client(API_KEY, API_SECRET, testnet=(TESTNET == "True"))
-    if TESTNET == "True":
+    client = Client(API_KEY, API_SECRET, testnet=TESTNET)
+    if TESTNET:
         client.API_URL = "https://testnet.binance.vision/api"
 
-    print_balance(client, "USDT")
-    print_balance(client, "ETH")
-
-    bot = GridTrader(
-        client,
-        symbol="ETHUSDT",
-        spread_usd=SPREAD_USD,
-        grids=GRIDS,
-        usdt_per_order=USDT_PER_ORDER,
-        target_gain_pct=TARGET_GAIN_PCT,
-        fee_pct=0.001,
-    )
-
+    bot = GridTrader(client)
     bot.setup_grid()
     bot.run()
-
-def print_balance(client, asset_symbol):
-    # Obtén la información de la cuenta
-    account_info = client.get_account()
-    balances = account_info['balances']
-    
-    # Busca y muestra el balance de la moneda especificada
-    for balance in balances:
-        if balance['asset'] == asset_symbol:
-            print(f"{balance['asset']}: {balance['free']} disponible")
-            break
-    else:
-        print(f"No se encontró saldo para {asset_symbol}")
-
 
 if __name__ == "__main__":
     main()
