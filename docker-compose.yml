@@ -28,9 +28,9 @@ services:
       - data:/data
     labels: # Traefik 🔽
       - traefik.enable=true
-      #      - traefik.http.routers.gridbot.rule=Host(`gridbot.<TU_DOMINIO>`)
-      #      - traefik.http.routers.gridbot.entrypoints=websecure
-      #      - traefik.http.routers.gridbot.tls.certresolver=le
+      - traefik.http.routers.gridbot.rule=Host(`gridbot.mollitiam.cl`)
+      - traefik.http.routers.gridbot.entrypoints=websecure
+      - traefik.http.routers.gridbot.tls.certresolver=le
       - traefik.http.routers.gridbot.rule=PathPrefix(`/`)
       - traefik.http.routers.gridbot.entrypoints=web
       - traefik.http.services.gridbot.loadbalancer.server.port=8501
