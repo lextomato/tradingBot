@@ -34,13 +34,11 @@ services:
       traefik.http.routers.dashboard.entrypoints: websecure
       traefik.http.routers.dashboard.tls.certresolver: le
       traefik.http.routers.dashboard.service: dashboard
-      traefik.http.routers.dashboard.middlewares: dashboard@docker # ⬅️  añadimos el SPA
 
       traefik.http.routers.dashboard2.rule: Host(`www.gridbot.mollitiam.cl`)
       traefik.http.routers.dashboard2.entrypoints: websecure
       traefik.http.routers.dashboard2.tls.certresolver: le
       traefik.http.routers.dashboard2.service: dashboard
-      traefik.http.routers.dashboard2.middlewares: dashboard@docker # ⬅️  idem www
 
       # ─────────────── Routers HTTP (301 a HTTPS) ───────────────
       traefik.http.routers.dashboard-http.rule: Host(`gridbot.mollitiam.cl`)
