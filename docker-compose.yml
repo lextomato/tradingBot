@@ -30,34 +30,34 @@ services:
       traefik.enable: true
 
       # ─────────────── Routers HTTPS ───────────────
-      traefik.http.routers.gridbot.rule: Host(`gridbot.mollitiam.cl`)
-      traefik.http.routers.gridbot.entrypoints: websecure
-      traefik.http.routers.gridbot.tls.certresolver: le
-      traefik.http.routers.gridbot.service: gridbot
-      traefik.http.routers.gridbot.middlewares: gridbot@docker # ⬅️  añadimos el SPA
+      traefik.http.routers.dashboard.rule: Host(`gridbot.mollitiam.cl`)
+      traefik.http.routers.dashboard.entrypoints: websecure
+      traefik.http.routers.dashboard.tls.certresolver: le
+      traefik.http.routers.dashboard.service: dashboard
+      traefik.http.routers.dashboard.middlewares: dashboard@docker # ⬅️  añadimos el SPA
 
-      traefik.http.routers.gridbot2.rule: Host(`www.gridbot.mollitiam.cl`)
-      traefik.http.routers.gridbot2.entrypoints: websecure
-      traefik.http.routers.gridbot2.tls.certresolver: le
-      traefik.http.routers.gridbot2.service: gridbot
-      traefik.http.routers.gridbot2.middlewares: gridbot@docker # ⬅️  idem www
+      traefik.http.routers.dashboard2.rule: Host(`www.gridbot.mollitiam.cl`)
+      traefik.http.routers.dashboard2.entrypoints: websecure
+      traefik.http.routers.dashboard2.tls.certresolver: le
+      traefik.http.routers.dashboard2.service: dashboard
+      traefik.http.routers.dashboard2.middlewares: dashboard@docker # ⬅️  idem www
 
       # ─────────────── Routers HTTP (301 a HTTPS) ───────────────
-      traefik.http.routers.gridbot-http.rule: Host(`gridbot.mollitiam.cl`)
-      traefik.http.routers.gridbot-http.entrypoints: web
-      traefik.http.routers.gridbot-http.middlewares: gridbot-redirect
+      traefik.http.routers.dashboard-http.rule: Host(`gridbot.mollitiam.cl`)
+      traefik.http.routers.dashboard-http.entrypoints: web
+      traefik.http.routers.dashboard-http.middlewares: dashboard-redirect
 
-      traefik.http.routers.gridbot2-http.rule: Host(`www.gridbot.mollitiam.cl`)
-      traefik.http.routers.gridbot2-http.entrypoints: web
-      traefik.http.routers.gridbot2-http.middlewares: gridbot-redirect
+      traefik.http.routers.dashboard2-http.rule: Host(`www.gridbot.mollitiam.cl`)
+      traefik.http.routers.dashboard2-http.entrypoints: web
+      traefik.http.routers.dashboard2-http.middlewares: dashboard-redirect
 
       # ─────────────── Middlewares ───────────────
       ## redirección 80 → 443
-      traefik.http.middlewares.gridbot-redirect.redirectscheme.scheme: https
-      traefik.http.middlewares.gridbot-redirect.redirectscheme.permanent: "true"
+      traefik.http.middlewares.dashboard-redirect.redirectscheme.scheme: https
+      traefik.http.middlewares.dashboard-redirect.redirectscheme.permanent: "true"
 
       # ─────────────── Servicio ───────────────
-      traefik.http.services.gridbot.loadbalancer.server.port: "8501"
+      traefik.http.services.dashboard.loadbalancer.server.port: "8501"
 
       # etiqueta-dummy para que Compose re-cree la imagen en cada push
       traefik.deploy.version: "${GITHUB_SHA:-local}"
